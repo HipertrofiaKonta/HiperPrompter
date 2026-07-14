@@ -34,16 +34,22 @@ html, body {
   height: 100%;
   overscroll-behavior: none;
 }
-/* ciemne tło samego dokumentu — bez białego paska przy overscrollu i pod home-indicatorem */
+/* Pełnoekranowy interfejs: gradient żyje na stałej warstwie przypiętej do viewportu
+   (body::before), więc pokrywa CAŁY ekran — łącznie ze strefą pod home-indicatorem
+   i obszarem overscrollu. Żadnych pasków w innym kolorze. */
 html { background-color: var(--bg-bottom); }
 body {
   min-height: 100dvh;
   background-color: var(--bg-bottom);
+}
+body::before {
+  content: "";
+  position: fixed; inset: 0; z-index: -1;
+  pointer-events: none;
   background:
     radial-gradient(120% 70% at 50% -10%, #26262f 0%, rgba(38, 38, 47, 0) 60%),
     radial-gradient(90% 50% at 100% 110%, rgba(254, 225, 43, 0.05) 0%, rgba(254, 225, 43, 0) 55%),
-    linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%) var(--bg-bottom);
-  background-attachment: fixed;
+    linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
 }
 button { font-family: inherit; color: inherit; }
 [hidden] { display: none !important; }
@@ -280,6 +286,27 @@ input[type="checkbox"]:checked::after { left: 25px; background: var(--accent-ink
   word-wrap: break-word;
 }
 #prompter-content .block { white-space: pre-wrap; }
+#prompter-content {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* reflektor strefy czytania (gradient ustawiany w JS wg pozycji linii) */
+#focus-veil {
+  position: absolute; inset: 0; z-index: 4;
+  pointer-events: none;
+}
+
+/* włoskowy pasek postępu czytania przy górnej krawędzi */
+#read-progress {
+  position: absolute; top: 0; left: 0; right: 0; height: 3px; z-index: 6;
+  background: linear-gradient(90deg, var(--accent-deep), var(--accent));
+  box-shadow: 0 0 10px rgba(254, 225, 43, 0.4);
+  transform-origin: 0 50%;
+  transform: scaleX(0);
+  opacity: 0.85;
+  pointer-events: none;
+}
 #prompter-content .fitword { display: inline-block; max-width: 100%; }
 #prompter-content .marker {
   display: flex; align-items: center; gap: 12px;

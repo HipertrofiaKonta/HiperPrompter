@@ -31,10 +31,10 @@ var FONTS = {
 /* Presety kolorów prompteru.
    bgTop = jaśniejszy środek gradientu (głębia), shadow = cień unoszący tekst nad tło */
 var COLORS = {
-  wb: { fg: '#ffffff', bg: '#000000', bgTop: '#17171f', shadow: '0 4px 22px rgba(0,0,0,0.65), 0 1px 3px rgba(0,0,0,0.5)' },
-  yb: { fg: '#FEE12B', bg: '#000000', bgTop: '#171407', shadow: '0 4px 22px rgba(0,0,0,0.65), 0 1px 3px rgba(0,0,0,0.5)' },
-  gb: { fg: '#7dff7d', bg: '#000000', bgTop: '#0d160d', shadow: '0 4px 22px rgba(0,0,0,0.65), 0 1px 3px rgba(0,0,0,0.5)' },
-  bw: { fg: '#101018', bg: '#dcdce6', bgTop: '#ffffff', shadow: '0 2px 14px rgba(16,16,32,0.18)' }
+  wb: { fg: '#ffffff', bg: '#000000', bgTop: '#17171f', shadow: '0 4px 22px rgba(0,0,0,0.65), 0 1px 3px rgba(0,0,0,0.5)', veil: 'rgba(0,0,0,0.42)' },
+  yb: { fg: '#FEE12B', bg: '#000000', bgTop: '#171407', shadow: '0 4px 22px rgba(0,0,0,0.65), 0 1px 3px rgba(0,0,0,0.5)', veil: 'rgba(0,0,0,0.42)' },
+  gb: { fg: '#7dff7d', bg: '#000000', bgTop: '#0d160d', shadow: '0 4px 22px rgba(0,0,0,0.65), 0 1px 3px rgba(0,0,0,0.5)', veil: 'rgba(0,0,0,0.42)' },
+  bw: { fg: '#101018', bg: '#dcdce6', bgTop: '#ffffff', shadow: '0 2px 14px rgba(16,16,32,0.18)', veil: 'rgba(236,236,244,0.5)' }
 };
 var DEFAULT_SETTINGS = {
   fontSize: 44, lineHeight: 1.4, margin: 6, colors: 'wb', font: 'sans',
@@ -325,6 +325,7 @@ function applySettings() {
   elPrompter.style.setProperty('--p-bg', col.bg);
   elPrompter.style.setProperty('--p-bg-top', col.bgTop || col.bg);
   elPrompter.style.setProperty('--p-fg', col.fg);
+  elPrompter.style.setProperty('--p-veil', col.veil || 'rgba(0,0,0,0.4)');
   elContent.style.textShadow = col.shadow || 'none';
   elContent.style.setProperty('--p-fs', s.fontSize + 'px');
   elContent.style.fontSize = s.fontSize + 'px';
@@ -342,6 +343,9 @@ function layout() {
   var s = S();
   P.guideY = Math.round(vh * s.guide / 100);
   elGuide.style.top = P.guideY + 'px';
+  // "reflektor" na strefę czytania: przeczytany tekst u góry delikatnie przygaszony
+  $('focus-veil').style.background =
+    'linear-gradient(180deg, var(--p-veil) 0%, rgba(0,0,0,0) ' + Math.max(60, P.guideY - 170) + 'px, rgba(0,0,0,0) 100%)';
   elContent.style.paddingTop = P.guideY + 'px';
   elContent.style.paddingBottom = Math.max(0, vh - P.guideY) + 'px';
   P.maxPos = Math.max(0, elContent.offsetHeight - vh);
@@ -358,6 +362,8 @@ function layout() {
 function renderPos() {
   var mirror = S().mirror ? ' scaleX(-1)' : '';
   elContent.style.transform = 'translate3d(0,' + (-P.pos) + 'px,0)' + mirror;
+  // włoskowy pasek postępu przy górnej krawędzi
+  $('read-progress').style.transform = 'scaleX(' + (P.maxPos > 0 ? P.pos / P.maxPos : 0) + ')';
 }
 
 /* przebudowa treści (dopasowanie długich słów zależy od szerokości, rozmiaru i czcionki) */
@@ -428,7 +434,12 @@ function pause() {
   showControls(true);
   remoteSendState();
 }
-function togglePlay() { P.playing ? pause() : startWithCountdownIfAtTop(); }
+function togglePlay() {
+  if (P.playing) { pause(); return; }
+  // po dojechaniu do końca Start/Play staje się "Od nowa" — restart z odliczaniem
+  if (P.maxPos > 0 && P.pos >= P.maxPos - 1) { restart(true); return; }
+  startWithCountdownIfAtTop();
+}
 
 function startWithCountdownIfAtTop() {
   hideStartOverlay();
@@ -447,7 +458,7 @@ function restart(withCountdown) {
 function onScrollEnd() {
   P.playing = false;
   if (P.rafId) { cancelAnimationFrame(P.rafId); P.rafId = null; }
-  elPlayPause.textContent = '▶';
+  elPlayPause.textContent = '↺';
   P.endShown = true;
   showControls(true);
   remoteSendState();
@@ -464,7 +475,10 @@ function onScrollEnd() {
     }
   }, 5000);
 }
-function hideEnd() { P.endShown = false; elEnd.hidden = true; clearTimeout(P.endTimer); }
+function hideEnd() {
+  P.endShown = false; elEnd.hidden = true; clearTimeout(P.endTimer);
+  if (!P.playing) elPlayPause.textContent = '▶';
+}
 
 /* odliczanie */
 function startCountdown(cb) {
@@ -580,7 +594,7 @@ function closePrompter() {
 elViewport.addEventListener('click', function () {
   if (!elCountdown.hidden || !elEnd.hidden || !$('start-overlay').hidden) return;
   if (P.playing) { pause(); }
-  else { showControls(true); startWithCountdownIfAtTop(); }
+  else { showControls(true); togglePlay(); }
 });
 $('btn-start-go').addEventListener('click', function (e) {
   e.stopPropagation();
@@ -897,6 +911,7 @@ function remoteSet(key, value) {
   if (key === 'colors' && COLORS[value]) s.colors = value;
   else if (key === 'font' && FONTS[value]) s.font = value;
   else if (key === 'fitWords') s.fitWords = !!value;
+  else if (key === 'countdown' && [0, 3, 5].indexOf(parseInt(value, 10)) !== -1) s.countdown = parseInt(value, 10);
   else if (key === 'mirror') s.mirror = !!value;
   else if (key === 'autoRestart') {
     s.autoRestart = !!value;
@@ -921,11 +936,12 @@ function remoteSendState() {
     progress: P.maxPos > 0 ? P.pos / P.maxPos : 0,
     name: P.script.name,
     counting: !elCountdown.hidden,
+    ended: !!P.endShown,
     marks: P.maxPos > 0 ? P.markers.map(function (m) { return Math.round(m / P.maxPos * 1000) / 1000; }) : [],
     settings: {
       fontSize: s.fontSize, lineHeight: s.lineHeight, guide: s.guide,
       colors: s.colors, font: s.font, mirror: !!s.mirror, autoRestart: !!s.autoRestart,
-      fitWords: s.fitWords !== false
+      fitWords: s.fitWords !== false, countdown: s.countdown
     }
   };
   host.conns.forEach(function (c) { try { c.send(msg); } catch (e) {} });
@@ -1069,7 +1085,8 @@ function rcOnData(d) {
       $('rc-speed').value = d.speed;
       $('rc-speed-val').textContent = d.speed + ' px/s';
     }
-    $('rc-toggle').textContent = d.counting ? '⏳ Odliczanie…' : (d.playing ? '⏸ Pauza' : '▶ Start');
+    $('rc-toggle').textContent = d.counting ? '⏳ Odliczanie…' :
+      (d.playing ? '⏸ Pauza' : (d.ended ? '↺ Od nowa' : '▶ Start'));
     if (d.settings) {
       if (!rcDrag.fs) {
         $('rcs-fs').value = d.settings.fontSize;
@@ -1079,6 +1096,7 @@ function rcOnData(d) {
       $('rcs-guide-val').textContent = d.settings.guide + '%';
       rcSegMark('rcs-colors', 'data-colors', d.settings.colors);
       rcSegMark('rcs-font', 'data-font', d.settings.font);
+      rcSegMark('rcs-countdown', 'data-cd', d.settings.countdown);
       $('rcs-mirror').checked = !!d.settings.mirror;
       $('rcs-autorestart').checked = !!d.settings.autoRestart;
       $('rcs-fitwords').checked = d.settings.fitWords !== false;
@@ -1099,6 +1117,10 @@ function rcSendObj(obj) {
   if (rc.conn && rc.conn.open) { try { rc.conn.send(obj); } catch (e) {} }
 }
 $('rcs-font-max').addEventListener('click', function () { rcSendObj({ t: 'cmd', cmd: 'fontmax' }); });
+$('rcs-countdown').addEventListener('click', function (e) {
+  var b = e.target.closest('button'); if (!b) return;
+  rcSendObj({ t: 'cmd', cmd: 'set', key: 'countdown', value: parseInt(b.getAttribute('data-cd'), 10) });
+});
 
 /* scrubber pozycji tekstu */
 var rcSeekThrottled = rcThrottled(function (v) { rcSendObj({ t: 'cmd', cmd: 'seek', value: v }); }, 100);

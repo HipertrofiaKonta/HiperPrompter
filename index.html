@@ -63,7 +63,9 @@
   <div id="prompter-viewport">
     <div id="prompter-content"></div>
   </div>
+  <div id="focus-veil"></div>
   <div id="guide-line"></div>
+  <div id="read-progress"></div>
 
   <div class="p-controls" id="controls-top">
     <button class="pbtn" id="btn-exit" type="button" aria-label="Wróć do listy">←</button>
@@ -227,6 +229,13 @@
 
     <div class="rc-grid">
       <button class="rc-btn" id="rc-toggle" type="button">▶ Start</button>
+
+      <div class="rc-set"><span>Odliczanie po Starcie</span></div>
+      <div class="seg" id="rcs-countdown">
+        <button data-cd="0" type="button">Bez</button>
+        <button data-cd="3" type="button">3 s</button>
+        <button data-cd="5" type="button">5 s</button>
+      </div>
 
       <div class="rc-slider-block">
         <div class="rc-slider-lbl"><span>Prędkość</span><span class="rc-slider-val" id="rc-speed-val">–</span></div>
