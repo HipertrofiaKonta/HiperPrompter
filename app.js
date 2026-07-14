@@ -445,17 +445,22 @@ function onScrollEnd() {
   if (P.rafId) { cancelAnimationFrame(P.rafId); P.rafId = null; }
   elPlayPause.textContent = '▶';
   P.endShown = true;
-  $('chk-auto-restart').checked = !!S().autoRestart;
-  elEnd.hidden = false;
   showControls(true);
   remoteSendState();
-  if (S().autoRestart) {
-    setTimeout(function () {
-      if (P.endShown && P.script) restart(true);
-    }, 1500);
-  }
+  // 5 s na dokończenie czytania ostatnich linii — dopiero potem nakładka "Od początku"
+  clearTimeout(P.endTimer);
+  P.endTimer = setTimeout(function () {
+    if (!P.endShown || !P.script) return;
+    $('chk-auto-restart').checked = !!S().autoRestart;
+    elEnd.hidden = false;
+    if (S().autoRestart) {
+      setTimeout(function () {
+        if (P.endShown && P.script) restart(true);
+      }, 1500);
+    }
+  }, 5000);
 }
-function hideEnd() { P.endShown = false; elEnd.hidden = true; }
+function hideEnd() { P.endShown = false; elEnd.hidden = true; clearTimeout(P.endTimer); }
 
 /* odliczanie */
 function startCountdown(cb) {
@@ -680,7 +685,7 @@ $('set-fitwords').addEventListener('change', function () {
   S().fitWords = this.checked;
   storeSave(); rebuildContent(true); updateSpeedUI(); renderLibraryLater();
 });
-$('btn-font-max').addEventListener('click', function () {
+function applyMaxFont() {
   if (!P.script) return;
   var s = S();
   var width = elViewport.clientWidth || window.innerWidth;
@@ -689,7 +694,8 @@ $('btn-font-max').addEventListener('click', function () {
   var fs = w100 > 0 ? Math.floor(100 * avail / w100) : FONT_MAX;
   s.fontSize = clamp(fs, FONT_MIN, FONT_MAX);
   storeSave(); applySettings(); rebuildContent(true); updateSpeedUI(); syncSettingsUI(); renderLibraryLater();
-});
+}
+$('btn-font-max').addEventListener('click', applyMaxFont);
 $('set-countdown').addEventListener('click', function (e) {
   var b = e.target.closest('button'); if (!b) return;
   S().countdown = parseInt(b.getAttribute('data-cd'), 10);
@@ -703,19 +709,42 @@ $('set-autorestart').addEventListener('change', function () {
 });
 
 /* ===================== PILOT — WSPÓLNE ===================== */
-var PEER_CDN = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
+/* Kilka CDN-ów zapasowych — pojedynczy bywa wolny/nieosiągalny na sieci komórkowej */
+var PEER_CDNS = [
+  'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js',
+  'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js'
+];
 var PEER_PREFIX = 'twprompt-';
-function loadPeerJS() {
+/* Dodatkowe serwery STUN — lepsza przebijalność NAT między sieciami komórkowymi */
+var PEER_OPTS = {
+  debug: 0,
+  config: { iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:global.stun.twilio.com:3478' }
+  ] }
+};
+function loadScriptOnce(src, timeoutMs) {
   return new Promise(function (resolve, reject) {
-    if (window.Peer) { resolve(); return; }
-    if (!navigator.onLine) { reject(new Error('offline')); return; }
     var s = document.createElement('script');
-    s.src = PEER_CDN;
-    var to = setTimeout(function () { reject(new Error('timeout')); }, 12000);
+    s.src = src;
+    var to = setTimeout(function () { s.remove(); reject(new Error('timeout')); }, timeoutMs || 8000);
     s.onload = function () { clearTimeout(to); resolve(); };
-    s.onerror = function () { clearTimeout(to); reject(new Error('load')); };
+    s.onerror = function () { clearTimeout(to); s.remove(); reject(new Error('load')); };
     document.head.appendChild(s);
   });
+}
+function loadPeerJS() {
+  if (window.Peer) return Promise.resolve();
+  var chain = Promise.reject(new Error('start'));
+  PEER_CDNS.forEach(function (src) {
+    chain = chain.catch(function () {
+      if (window.Peer) return;
+      return loadScriptOnce(src);
+    });
+  });
+  return chain;
 }
 function randomCode() {
   var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', out = '';
@@ -740,21 +769,31 @@ function remoteStatus(msg, cls) {
 
 function openRemotePanel() {
   $('remote-panel').hidden = false;
-  if (host.peer && !host.peer.destroyed) { return; } // już działa
+  if (host.peer && !host.peer.destroyed && !host.peer.disconnected) {
+    // pilot już działa — tylko odśwież status (bez ponownego rysowania QR)
+    remoteStatus(host.conns.length ? '✓ Pilot połączony' : 'Czekam na drugi telefon…', host.conns.length ? 'ok' : '');
+    return;
+  }
+  startHostPeer();
+}
+
+function startHostPeer() {
   remoteStatus('Łączenie z serwerem…');
-  $('remote-qr').innerHTML = '';
-  $('remote-code').textContent = '';
   loadPeerJS().then(function () {
-    host.code = randomCode();
-    try { host.peer = new Peer(PEER_PREFIX + host.code, { debug: 0 }); }
+    if (!host.code) host.code = randomCode(); // ten sam kod przy ponowieniach — QR pozostaje ważny
+    if (host.peer) { try { host.peer.destroy(); } catch (e) {} }
+    try { host.peer = new Peer(PEER_PREFIX + host.code, PEER_OPTS); }
     catch (e) { remoteStatus('Nie udało się uruchomić pilota. Prompter działa normalnie.', 'err'); return; }
     host.peer.on('open', function () {
+      host.retries = 0;
       var url = location.origin + location.pathname + '?pilot=' + host.code;
+      var qrBox = $('remote-qr');
+      qrBox.innerHTML = ''; // zawsze jeden kod QR — bez duplikatów po wznowieniu
       var qr = window.qrEncode ? qrEncode(url) : null;
-      if (qr) $('remote-qr').appendChild(qrToCanvas(qr, 6, 4));
-      else $('remote-qr').textContent = url;
+      if (qr) qrBox.appendChild(qrToCanvas(qr, 6, 4));
+      else qrBox.textContent = url;
       $('remote-code').textContent = host.code;
-      remoteStatus('Czekam na drugi telefon…');
+      remoteStatus(host.conns.length ? '✓ Pilot połączony' : 'Czekam na drugi telefon…', host.conns.length ? 'ok' : '');
     });
     host.peer.on('connection', function (conn) {
       conn.on('open', function () {
@@ -769,13 +808,24 @@ function openRemotePanel() {
       });
     });
     host.peer.on('error', function (err) {
-      remoteStatus('Błąd połączenia (' + (err.type || 'nieznany') + '). Pilot niedostępny — prompter działa normalnie.', 'err');
+      var t = (err && err.type) || 'nieznany';
+      if (t === 'peer-unavailable') return; // nie dotyczy hosta
+      if (t === 'unavailable-id') { host.code = null; setTimeout(startHostPeer, 500); return; }
+      // problemy sieciowe: ponawiaj automatycznie z tym samym kodem
+      host.retries = (host.retries || 0) + 1;
+      if (host.retries <= 8) {
+        remoteStatus('Problem z połączeniem (' + t + '). Ponawiam za chwilę…', 'err');
+        clearTimeout(host.retryTimer);
+        host.retryTimer = setTimeout(startHostPeer, 4000);
+      } else {
+        remoteStatus('Nie udało się połączyć (' + t + '). Sprawdź internet i otwórz panel pilota ponownie. Prompter działa normalnie.', 'err');
+      }
     });
     host.peer.on('disconnected', function () {
       try { host.peer.reconnect(); } catch (e) {}
     });
   }).catch(function () {
-    remoteStatus('Brak internetu lub nie można pobrać modułu pilota. Prompter działa normalnie bez pilota.', 'err');
+    remoteStatus('Nie można pobrać modułu pilota — sprawdź internet i spróbuj ponownie. Prompter działa normalnie bez pilota.', 'err');
   });
 }
 
@@ -790,6 +840,7 @@ function handleRemoteCmd(d) {
     case 'prev': jumpMarker(-1); break;
     case 'adj': remoteAdj(d.key, d.delta); break;
     case 'set': remoteSet(d.key, d.value); break;
+    case 'fontmax': applyMaxFont(); remoteSendState(); break;
   }
   showControls();
 }
@@ -882,17 +933,26 @@ function rcStatus(msg, cls) {
   el.className = cls || '';
 }
 
-function rcConnect(code) {
-  rcStatus('Łączenie…');
+function rcConnect(code, attempt) {
+  attempt = attempt || 1;
+  rcStatus(attempt > 1 ? 'Ponawiam łączenie… (próba ' + attempt + ' z 3)' : 'Łączenie…');
+  var failed = false;
+  function fail(finalMsg) {
+    if (failed) return;
+    failed = true;
+    if (rc.peer) { try { rc.peer.destroy(); } catch (e) {} rc.peer = null; }
+    if (attempt < 3) setTimeout(function () { rcConnect(code, attempt + 1); }, 1500);
+    else rcStatus(finalMsg, 'err');
+  }
   loadPeerJS().then(function () {
     if (rc.peer) { try { rc.peer.destroy(); } catch (e) {} }
-    rc.peer = new Peer({ debug: 0 });
+    rc.peer = new Peer(PEER_OPTS);
     var opened = false;
+    var to = setTimeout(function () {
+      if (!opened) fail('Nie udało się połączyć z prompterem o kodzie ' + code + '. Upewnij się, że panel pilota jest otwarty na drugim telefonie i oba mają internet.');
+    }, 12000);
     rc.peer.on('open', function () {
       var conn = rc.peer.connect(PEER_PREFIX + code, { reliable: true });
-      var to = setTimeout(function () {
-        if (!opened) rcStatus('Nie znaleziono prompteru o kodzie ' + code + '. Sprawdź kod i internet na obu telefonach.', 'err');
-      }, 10000);
       conn.on('open', function () {
         opened = true; clearTimeout(to);
         rc.conn = conn;
@@ -907,14 +967,19 @@ function rcConnect(code) {
         $('remote-pair-box').hidden = false;
       });
       conn.on('error', function () {
-        rcStatus('Błąd połączenia. Spróbuj ponownie.', 'err');
+        clearTimeout(to);
+        fail('Błąd połączenia z prompterem. Sprawdź internet na obu telefonach i spróbuj ponownie.');
       });
     });
     rc.peer.on('error', function (err) {
-      rcStatus('Błąd: ' + (err.type || 'nieznany') + '. Sprawdź internet i spróbuj ponownie.', 'err');
+      var t = (err && err.type) || 'nieznany';
+      if (opened && t === 'peer-unavailable') return;
+      clearTimeout(to);
+      if (t === 'peer-unavailable') fail('Nie znaleziono prompteru o kodzie ' + code + '. Otwórz panel pilota na drugim telefonie i sprawdź kod.');
+      else fail('Problem z połączeniem (' + t + '). Sprawdź internet i spróbuj ponownie.');
     });
   }).catch(function () {
-    rcStatus('Brak internetu — pilot wymaga połączenia na obu telefonach.', 'err');
+    fail('Nie można pobrać modułu pilota — sprawdź połączenie z internetem.');
   });
 }
 
@@ -961,6 +1026,7 @@ function rcSendObj(obj) {
 }
 $('rcs-fs-minus').addEventListener('click', function () { rcSendObj({ t: 'cmd', cmd: 'adj', key: 'fontSize', delta: -2 }); });
 $('rcs-fs-plus').addEventListener('click', function () { rcSendObj({ t: 'cmd', cmd: 'adj', key: 'fontSize', delta: 2 }); });
+$('rcs-font-max').addEventListener('click', function () { rcSendObj({ t: 'cmd', cmd: 'fontmax' }); });
 $('rcs-lh-minus').addEventListener('click', function () { rcSendObj({ t: 'cmd', cmd: 'adj', key: 'lineHeight', delta: -0.05 }); });
 $('rcs-lh-plus').addEventListener('click', function () { rcSendObj({ t: 'cmd', cmd: 'adj', key: 'lineHeight', delta: 0.05 }); });
 $('rcs-guide-minus').addEventListener('click', function () { rcSendObj({ t: 'cmd', cmd: 'adj', key: 'guide', delta: -2 }); });
