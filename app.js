@@ -34,7 +34,7 @@ var COLORS = {
   wb: { fg: '#ffffff', bg: '#000000', bgTop: '#17171f', shadow: '0 4px 22px rgba(0,0,0,0.65), 0 1px 3px rgba(0,0,0,0.5)' },
   yb: { fg: '#FEE12B', bg: '#000000', bgTop: '#171407', shadow: '0 4px 22px rgba(0,0,0,0.65), 0 1px 3px rgba(0,0,0,0.5)' },
   gb: { fg: '#7dff7d', bg: '#000000', bgTop: '#0d160d', shadow: '0 4px 22px rgba(0,0,0,0.65), 0 1px 3px rgba(0,0,0,0.5)' },
-  bw: { fg: '#101018', bg: '#e9e9f0', bgTop: '#ffffff', shadow: '0 2px 12px rgba(16,16,32,0.16)' }
+  bw: { fg: '#101018', bg: '#dcdce6', bgTop: '#ffffff', shadow: '0 2px 14px rgba(16,16,32,0.18)' }
 };
 var DEFAULT_SETTINGS = {
   fontSize: 44, lineHeight: 1.4, margin: 6, colors: 'wb', font: 'sans',
@@ -812,6 +812,7 @@ function startHostPeer() {
         host.conns.push(conn);
         remoteStatus('✓ Pilot połączony', 'ok');
         remoteSendState();
+        setTimeout(remoteSendState, 700); // powtórka — pierwszy pakiet bywa gubiony tuż po otwarciu kanału
       });
       conn.on('data', function (d) { handleRemoteCmd(d); });
       conn.on('close', function () {
@@ -920,6 +921,7 @@ function remoteSendState() {
     progress: P.maxPos > 0 ? P.pos / P.maxPos : 0,
     name: P.script.name,
     counting: !elCountdown.hidden,
+    marks: P.maxPos > 0 ? P.markers.map(function (m) { return Math.round(m / P.maxPos * 1000) / 1000; }) : [],
     settings: {
       fontSize: s.fontSize, lineHeight: s.lineHeight, guide: s.guide,
       colors: s.colors, font: s.font, mirror: !!s.mirror, autoRestart: !!s.autoRestart,
@@ -1024,12 +1026,23 @@ function rcSegMark(containerId, attr, val) {
   }
 }
 
-/* wypełnienie scrubbera: ciemny odcień -> jaskrawy akcent do pozycji kciuka */
-function updateScrubFill(el) {
-  var min = Number(el.min) || 0, max = Number(el.max) || 100;
-  var p = ((el.value - min) / (max - min)) * 100;
-  el.style.background =
-    'linear-gradient(90deg, rgba(254,225,43,0.22) 0%, #FEE12B ' + p + '%, rgba(255,255,255,0.09) ' + p + '%)';
+/* oś czasu: wypełnienie postępu + znaczniki sekcji // */
+function updateTimeline(frac) {
+  $('tl-fill').style.width = (clamp(frac, 0, 1) * 100) + '%';
+}
+var lastTicksJson = '';
+function renderTimelineTicks(marks) {
+  var j = JSON.stringify(marks || []);
+  if (j === lastTicksJson) return;
+  lastTicksJson = j;
+  var box = $('tl-ticks');
+  box.innerHTML = '';
+  (marks || []).forEach(function (m) {
+    if (m <= 0.005 || m >= 0.995) return;
+    var t = document.createElement('span');
+    t.style.left = (m * 100) + '%';
+    box.appendChild(t);
+  });
 }
 
 var rcDrag = { scrub: false, speed: false, fs: false };
@@ -1049,8 +1062,9 @@ function rcOnData(d) {
       var scrub = $('rc-scrub');
       scrub.value = Math.round((d.progress || 0) * 1000);
       $('rc-scrub-val').textContent = Math.round((d.progress || 0) * 100) + '%';
-      updateScrubFill(scrub);
+      updateTimeline(d.progress || 0);
     }
+    renderTimelineTicks(d.marks);
     if (!rcDrag.speed) {
       $('rc-speed').value = d.speed;
       $('rc-speed-val').textContent = d.speed + ' px/s';
@@ -1092,7 +1106,7 @@ $('rc-scrub').addEventListener('input', function () {
   rcDrag.scrub = true;
   var v = this.value / 1000;
   $('rc-scrub-val').textContent = Math.round(v * 100) + '%';
-  updateScrubFill(this);
+  updateTimeline(v);
   rcSeekThrottled(v);
 });
 $('rc-scrub').addEventListener('change', function () {

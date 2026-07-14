@@ -216,7 +216,13 @@
 
     <div class="rc-slider-block rc-scrub-block">
       <div class="rc-slider-lbl"><span>Pozycja tekstu — przesuń, aby przewinąć</span><span class="rc-slider-val" id="rc-scrub-val">0%</span></div>
-      <input type="range" class="scrub" id="rc-scrub" min="0" max="1000" step="1" value="0" aria-label="Pozycja tekstu">
+      <div class="timeline">
+        <div class="tl-track">
+          <div class="tl-fill" id="tl-fill"></div>
+          <div class="tl-ticks" id="tl-ticks"></div>
+        </div>
+        <input type="range" id="rc-scrub" min="0" max="1000" step="1" value="0" aria-label="Pozycja tekstu">
+      </div>
     </div>
 
     <div class="rc-grid">
