@@ -60,7 +60,8 @@ input[type="range"] {
 }
 input[type="range"]::-webkit-slider-runnable-track {
   height: 6px; border-radius: 3px;
-  background: linear-gradient(90deg, rgba(254, 225, 43, 0.55), rgba(254, 225, 43, 0.18)), rgba(255, 255, 255, 0.1);
+  /* od ciemnego odcienia do jaskrawego — sugeruje wzrost wartości */
+  background: linear-gradient(90deg, rgba(254, 225, 43, 0.14) 0%, rgba(254, 225, 43, 0.5) 55%, var(--accent) 100%);
 }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -71,7 +72,8 @@ input[type="range"]::-webkit-slider-thumb {
 }
 input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.18); }
 input[type="range"]::-moz-range-track {
-  height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.12);
+  height: 6px; border-radius: 3px;
+  background: linear-gradient(90deg, rgba(254, 225, 43, 0.14) 0%, rgba(254, 225, 43, 0.5) 55%, var(--accent) 100%);
 }
 input[type="range"]::-moz-range-thumb {
   width: 26px; height: 26px; border-radius: 50%; border: none;
@@ -249,11 +251,19 @@ input[type="checkbox"]:checked::after { left: 25px; background: var(--accent-ink
 /* ============ EKRAN 2: PROMPTER ============ */
 #screen-prompter {
   position: fixed; inset: 0; z-index: 100;
-  background: var(--p-bg, #000);
+  /* głębia: delikatnie rozświetlony środek przechodzący w ciemniejsze krawędzie (winieta) */
+  background:
+    radial-gradient(130% 85% at 50% 32%, var(--p-bg-top, #17171f) 0%, var(--p-bg, #000) 68%),
+    var(--p-bg, #000);
   overflow: hidden;
   touch-action: none;
 }
-#prompter-viewport { position: absolute; inset: 0; overflow: hidden; }
+#prompter-viewport {
+  position: absolute; inset: 0; overflow: hidden;
+  /* tekst wyłania się i rozpływa przy krawędziach — efekt głębi i fokus na strefie czytania */
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+}
 #prompter-content {
   position: relative;
   color: var(--p-fg, #fff);
@@ -289,6 +299,13 @@ input[type="checkbox"]:checked::after { left: 25px; background: var(--accent-ink
 #guide-line::before {
   content: ""; position: absolute; left: 2px; top: -7px;
   border: 6px solid transparent; border-left-color: var(--accent);
+}
+/* ledwo widoczne pasmo świetlne wokół linii czytania — kotwiczy wzrok, dodaje głębi */
+#guide-line::after {
+  content: ""; position: absolute; left: 0; right: 0;
+  top: -52px; height: 104px;
+  background: linear-gradient(180deg, transparent 0%, rgba(254, 225, 43, 0.045) 42%, rgba(254, 225, 43, 0.045) 58%, transparent 100%);
+  pointer-events: none;
 }
 
 /* kontrolki prompteru */
@@ -510,16 +527,40 @@ input[type="checkbox"]:checked::after { left: 25px; background: var(--accent-ink
 #remote-conn-status.ok { color: var(--ok); }
 #remote-conn-status.err { color: var(--danger); }
 #remote-script-name { font-size: 15px; color: #d9d9e0; margin-bottom: 8px; min-height: 20px; font-weight: 600; }
-#remote-progress {
-  width: 100%; height: 8px; background: rgba(255, 255, 255, 0.08);
-  border-radius: 4px; margin-bottom: 20px; overflow: hidden;
+
+/* bloki suwaków na pilocie */
+.rc-slider-block { width: 100%; }
+.rc-slider-lbl {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 13.5px; color: #c9c9d2; margin-bottom: 2px;
 }
-#remote-progress .bar {
-  height: 100%; width: 0%;
-  background: linear-gradient(90deg, var(--accent-deep), var(--accent), #fff2a8, var(--accent));
-  background-size: 200% 100%;
-  animation: shimmer 2.4s linear infinite;
-  border-radius: 4px; transition: width 0.3s linear;
+.rc-slider-val { color: var(--accent); font-weight: 800; font-variant-numeric: tabular-nums; font-size: 14px; }
+.rc-scrub-block { margin-bottom: 14px; }
+
+/* scrubber pozycji: duży, wyraźny, z wypełnieniem postępu (JS) */
+input[type="range"].scrub {
+  height: 56px;
+  border-radius: 12px;
+  background: linear-gradient(90deg, rgba(254, 225, 43, 0.22) 0%, var(--accent) 0%, rgba(255, 255, 255, 0.09) 0%);
+  border: 1px solid var(--border);
+  padding: 0 4px;
+}
+input[type="range"].scrub::-webkit-slider-runnable-track {
+  height: 56px; border-radius: 12px; background: transparent;
+}
+input[type="range"].scrub::-webkit-slider-thumb {
+  width: 34px; height: 48px; margin-top: 4px; border-radius: 12px;
+  background:
+    linear-gradient(90deg, transparent 12px, rgba(25, 20, 0, 0.55) 12px, rgba(25, 20, 0, 0.55) 14px, transparent 14px),
+    linear-gradient(90deg, transparent 19px, rgba(25, 20, 0, 0.55) 19px, rgba(25, 20, 0, 0.55) 21px, transparent 21px),
+    radial-gradient(circle at 35% 30%, #fff7c4, var(--accent) 55%, var(--accent-deep));
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55), 0 0 18px rgba(254, 225, 43, 0.4);
+}
+input[type="range"].scrub::-moz-range-track { height: 56px; border-radius: 12px; background: transparent; }
+input[type="range"].scrub::-moz-range-thumb {
+  width: 34px; height: 48px; border-radius: 12px; border: none;
+  background: var(--accent);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55), 0 0 18px rgba(254, 225, 43, 0.4);
 }
 #screen-remote .rc-grid { display: flex; flex-direction: column; gap: 12px; flex: 1; }
 .rc-btn {

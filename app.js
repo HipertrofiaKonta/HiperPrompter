@@ -28,11 +28,13 @@ var FONTS = {
   serif: 'Georgia, "Times New Roman", serif',
   legible: 'Verdana, Tahoma, "DejaVu Sans", sans-serif'
 };
+/* Presety kolorów prompteru.
+   bgTop = jaśniejszy środek gradientu (głębia), shadow = cień unoszący tekst nad tło */
 var COLORS = {
-  wb: { fg: '#ffffff', bg: '#000000' },
-  yb: { fg: '#ffd400', bg: '#000000' },
-  gb: { fg: '#7dff7d', bg: '#000000' },
-  bw: { fg: '#000000', bg: '#ffffff' }
+  wb: { fg: '#ffffff', bg: '#000000', bgTop: '#17171f', shadow: '0 4px 22px rgba(0,0,0,0.65), 0 1px 3px rgba(0,0,0,0.5)' },
+  yb: { fg: '#FEE12B', bg: '#000000', bgTop: '#171407', shadow: '0 4px 22px rgba(0,0,0,0.65), 0 1px 3px rgba(0,0,0,0.5)' },
+  gb: { fg: '#7dff7d', bg: '#000000', bgTop: '#0d160d', shadow: '0 4px 22px rgba(0,0,0,0.65), 0 1px 3px rgba(0,0,0,0.5)' },
+  bw: { fg: '#101018', bg: '#e9e9f0', bgTop: '#ffffff', shadow: '0 2px 12px rgba(16,16,32,0.16)' }
 };
 var DEFAULT_SETTINGS = {
   fontSize: 44, lineHeight: 1.4, margin: 6, colors: 'wb', font: 'sans',
@@ -321,7 +323,9 @@ function S() { return P.script ? P.script.settings : DEFAULT_SETTINGS; }
 function applySettings() {
   var s = S(), col = COLORS[s.colors] || COLORS.wb;
   elPrompter.style.setProperty('--p-bg', col.bg);
+  elPrompter.style.setProperty('--p-bg-top', col.bgTop || col.bg);
   elPrompter.style.setProperty('--p-fg', col.fg);
+  elContent.style.textShadow = col.shadow || 'none';
   elContent.style.setProperty('--p-fs', s.fontSize + 'px');
   elContent.style.fontSize = s.fontSize + 'px';
   elContent.style.lineHeight = s.lineHeight;
@@ -413,7 +417,7 @@ function play() {
   P.lastT = 0;
   elPlayPause.textContent = '⏸';
   P.rafId = requestAnimationFrame(tick);
-  scheduleControlsFade();
+  hideControlsNow(); // czysty ekran od pierwszej klatki
   remoteSendState();
 }
 function pause() {
@@ -506,21 +510,29 @@ function jumpMarker(dirn) {
   remoteSendState();
 }
 
-/* kontrolki: pojawianie / znikanie */
+/* kontrolki: pojawianie / znikanie
+   - przy starcie tekstu panel chowa się od razu (maksymalna czytelność)
+   - po dotknięciu / pauzie panel widoczny 1,5 s
+   - komendy z pilota NIE aktywują panelu na ekranie prompteru */
+var CONTROLS_FADE_MS = 1500;
+function hideControlsNow() {
+  elCtrlTop.classList.add('faded');
+  elCtrlBottom.classList.add('faded');
+}
 function showControls(sticky) {
+  if (P.remoteAction) return; // sterowanie z pilota nie pokazuje panelu
   elCtrlTop.classList.remove('faded');
   elCtrlBottom.classList.remove('faded');
-  if (!sticky) scheduleControlsFade(); else clearTimeout(P.controlsTimer);
-  if (P.playing) scheduleControlsFade();
+  scheduleControlsFade();
 }
 function scheduleControlsFade() {
   clearTimeout(P.controlsTimer);
   P.controlsTimer = setTimeout(function () {
-    if (P.playing && $('settings-panel').hidden && $('remote-panel').hidden) {
-      elCtrlTop.classList.add('faded');
-      elCtrlBottom.classList.add('faded');
+    if ($('settings-panel').hidden && $('remote-panel').hidden &&
+        $('start-overlay').hidden && elEnd.hidden) {
+      hideControlsNow();
     }
-  }, 3000);
+  }, CONTROLS_FADE_MS);
 }
 
 /* otwarcie / zamknięcie prompteru */
@@ -631,7 +643,7 @@ $('btn-settings').addEventListener('click', function (e) {
   syncSettingsUI();
   elSettings.hidden = false;
 });
-$('btn-settings-close').addEventListener('click', function () { elSettings.hidden = true; });
+$('btn-settings-close').addEventListener('click', function () { elSettings.hidden = true; scheduleControlsFade(); });
 
 function syncSettingsUI() {
   var s = S();
@@ -759,7 +771,7 @@ $('btn-open-remote').addEventListener('click', function () {
   elSettings.hidden = true;
   openRemotePanel();
 });
-$('btn-remote-close').addEventListener('click', function () { $('remote-panel').hidden = true; });
+$('btn-remote-close').addEventListener('click', function () { $('remote-panel').hidden = true; scheduleControlsFade(); });
 
 function remoteStatus(msg, cls) {
   var el = $('remote-status');
@@ -831,18 +843,34 @@ function startHostPeer() {
 
 function handleRemoteCmd(d) {
   if (!d || d.t !== 'cmd' || !P.script) return;
-  switch (d.cmd) {
-    case 'toggle': togglePlay(); break;
-    case 'restart': restart(true); break;
-    case 'faster': setSpeed(S().speed + 5); break;
-    case 'slower': setSpeed(S().speed - 5); break;
-    case 'next': jumpMarker(1); break;
-    case 'prev': jumpMarker(-1); break;
-    case 'adj': remoteAdj(d.key, d.delta); break;
-    case 'set': remoteSet(d.key, d.value); break;
-    case 'fontmax': applyMaxFont(); remoteSendState(); break;
+  P.remoteAction = true; // komendy pilota nie aktywują panelu na prompterze
+  try {
+    switch (d.cmd) {
+      case 'toggle': togglePlay(); break;
+      case 'restart': restart(true); break;
+      case 'faster': setSpeed(S().speed + 5); break;
+      case 'slower': setSpeed(S().speed - 5); break;
+      case 'next': jumpMarker(1); break;
+      case 'prev': jumpMarker(-1); break;
+      case 'adj': remoteAdj(d.key, d.delta); break;
+      case 'set': remoteSet(d.key, d.value); break;
+      case 'seek': remoteSeek(d.value); break;
+      case 'fontmax': applyMaxFont(); remoteSendState(); break;
+    }
+  } finally {
+    P.remoteAction = false;
   }
-  showControls();
+}
+
+/* przewinięcie tekstu do pozycji 0..1 (scrubber na pilocie) */
+function remoteSeek(v) {
+  v = clamp(Number(v) || 0, 0, 1);
+  hideEnd();
+  cancelCountdown();
+  hideStartOverlay();
+  P.pos = v * P.maxPos;
+  renderPos();
+  remoteSendState();
 }
 
 function remoteAdj(key, delta) {
@@ -859,6 +887,12 @@ function remoteAdj(key, delta) {
 
 function remoteSet(key, value) {
   var s = S();
+  if (key === 'speed') { setSpeed(value); return; }
+  if (key === 'fontSize') {
+    s.fontSize = clamp(Math.round(Number(value) || s.fontSize), FONT_MIN, FONT_MAX);
+    storeSaveDebounced(); applySettings(); rebuildContent(true); syncSettingsUI(); updateSpeedUI();
+    return;
+  }
   if (key === 'colors' && COLORS[value]) s.colors = value;
   else if (key === 'font' && FONTS[value]) s.font = value;
   else if (key === 'fitWords') s.fitWords = !!value;
@@ -990,15 +1024,43 @@ function rcSegMark(containerId, attr, val) {
   }
 }
 
+/* wypełnienie scrubbera: ciemny odcień -> jaskrawy akcent do pozycji kciuka */
+function updateScrubFill(el) {
+  var min = Number(el.min) || 0, max = Number(el.max) || 100;
+  var p = ((el.value - min) / (max - min)) * 100;
+  el.style.background =
+    'linear-gradient(90deg, rgba(254,225,43,0.22) 0%, #FEE12B ' + p + '%, rgba(255,255,255,0.09) ' + p + '%)';
+}
+
+var rcDrag = { scrub: false, speed: false, fs: false };
+function rcThrottled(fn, ms) {
+  var last = 0;
+  return function (v) {
+    var now = Date.now();
+    if (now - last >= ms) { last = now; fn(v); }
+  };
+}
+
 function rcOnData(d) {
   if (!d) return;
   if (d.t === 'state') {
     $('remote-script-name').textContent = d.name || '';
-    $('remote-progress').querySelector('.bar').style.width = Math.round((d.progress || 0) * 100) + '%';
-    $('rc-speed-val').textContent = 'Prędkość: ' + d.speed + ' px/s';
+    if (!rcDrag.scrub) {
+      var scrub = $('rc-scrub');
+      scrub.value = Math.round((d.progress || 0) * 1000);
+      $('rc-scrub-val').textContent = Math.round((d.progress || 0) * 100) + '%';
+      updateScrubFill(scrub);
+    }
+    if (!rcDrag.speed) {
+      $('rc-speed').value = d.speed;
+      $('rc-speed-val').textContent = d.speed + ' px/s';
+    }
     $('rc-toggle').textContent = d.counting ? '⏳ Odliczanie…' : (d.playing ? '⏸ Pauza' : '▶ Start');
     if (d.settings) {
-      $('rcs-fs-val').textContent = d.settings.fontSize + ' px';
+      if (!rcDrag.fs) {
+        $('rcs-fs').value = d.settings.fontSize;
+        $('rcs-fs-val').textContent = d.settings.fontSize + ' px';
+      }
       $('rcs-lh-val').textContent = Number(d.settings.lineHeight).toFixed(2);
       $('rcs-guide-val').textContent = d.settings.guide + '%';
       rcSegMark('rcs-colors', 'data-colors', d.settings.colors);
@@ -1016,17 +1078,52 @@ function rcSend(cmd) {
 }
 $('rc-toggle').addEventListener('click', function () { rcSend('toggle'); });
 $('rc-restart').addEventListener('click', function () { rcSend('restart'); });
-$('rc-faster').addEventListener('click', function () { rcSend('faster'); });
-$('rc-slower').addEventListener('click', function () { rcSend('slower'); });
 $('rc-next').addEventListener('click', function () { rcSend('next'); });
 $('rc-prev').addEventListener('click', function () { rcSend('prev'); });
 
 function rcSendObj(obj) {
   if (rc.conn && rc.conn.open) { try { rc.conn.send(obj); } catch (e) {} }
 }
-$('rcs-fs-minus').addEventListener('click', function () { rcSendObj({ t: 'cmd', cmd: 'adj', key: 'fontSize', delta: -2 }); });
-$('rcs-fs-plus').addEventListener('click', function () { rcSendObj({ t: 'cmd', cmd: 'adj', key: 'fontSize', delta: 2 }); });
 $('rcs-font-max').addEventListener('click', function () { rcSendObj({ t: 'cmd', cmd: 'fontmax' }); });
+
+/* scrubber pozycji tekstu */
+var rcSeekThrottled = rcThrottled(function (v) { rcSendObj({ t: 'cmd', cmd: 'seek', value: v }); }, 100);
+$('rc-scrub').addEventListener('input', function () {
+  rcDrag.scrub = true;
+  var v = this.value / 1000;
+  $('rc-scrub-val').textContent = Math.round(v * 100) + '%';
+  updateScrubFill(this);
+  rcSeekThrottled(v);
+});
+$('rc-scrub').addEventListener('change', function () {
+  var v = this.value / 1000;
+  rcSendObj({ t: 'cmd', cmd: 'seek', value: v });
+  setTimeout(function () { rcDrag.scrub = false; }, 350);
+});
+
+/* suwak prędkości */
+var rcSpeedThrottled = rcThrottled(function (v) { rcSendObj({ t: 'cmd', cmd: 'set', key: 'speed', value: v }); }, 120);
+$('rc-speed').addEventListener('input', function () {
+  rcDrag.speed = true;
+  $('rc-speed-val').textContent = this.value + ' px/s';
+  rcSpeedThrottled(parseInt(this.value, 10));
+});
+$('rc-speed').addEventListener('change', function () {
+  rcSendObj({ t: 'cmd', cmd: 'set', key: 'speed', value: parseInt(this.value, 10) });
+  setTimeout(function () { rcDrag.speed = false; }, 350);
+});
+
+/* suwak rozmiaru tekstu */
+var rcFsThrottled = rcThrottled(function (v) { rcSendObj({ t: 'cmd', cmd: 'set', key: 'fontSize', value: v }); }, 150);
+$('rcs-fs').addEventListener('input', function () {
+  rcDrag.fs = true;
+  $('rcs-fs-val').textContent = this.value + ' px';
+  rcFsThrottled(parseInt(this.value, 10));
+});
+$('rcs-fs').addEventListener('change', function () {
+  rcSendObj({ t: 'cmd', cmd: 'set', key: 'fontSize', value: parseInt(this.value, 10) });
+  setTimeout(function () { rcDrag.fs = false; }, 350);
+});
 $('rcs-lh-minus').addEventListener('click', function () { rcSendObj({ t: 'cmd', cmd: 'adj', key: 'lineHeight', delta: -0.05 }); });
 $('rcs-lh-plus').addEventListener('click', function () { rcSendObj({ t: 'cmd', cmd: 'adj', key: 'lineHeight', delta: 0.05 }); });
 $('rcs-guide-minus').addEventListener('click', function () { rcSendObj({ t: 'cmd', cmd: 'adj', key: 'guide', delta: -2 }); });
